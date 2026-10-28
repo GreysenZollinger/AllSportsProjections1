@@ -87,18 +87,19 @@ def get_current_games(sport):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_history(sport, days):
-    """Fetch history in short date ranges to avoid ESPN rejecting long queries."""
+    """Fetch history one calendar day at a time."""
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
     rows_by_event = {}
-    chunk_start = start_date
+    current_date = start_date
 
-    while chunk_start <= end_date:
-        chunk_end = min(chunk_start + timedelta(days=2), end_date)
-        date_range = f"{chunk_start:%Y%m%d}-{chunk_end:%Y%m%d}"
+    while current_date <= end_date:
         response = requests.get(
             scoreboard_url(sport),
-            params={"dates": date_range, "limit": 100},
+            params={
+                "dates": current_date.strftime("%Y%m%d"),
+                "limit": 100,
+            },
             timeout=30,
         )
         response.raise_for_status()
@@ -110,7 +111,7 @@ def get_history(sport, days):
             )
             rows_by_event[key] = row
 
-        chunk_start = chunk_end + timedelta(days=1)
+        current_date += timedelta(days=1)
 
     # Only completed games with a decisive score can be used for ratings.
     return [
@@ -119,7 +120,6 @@ def get_history(sport, days):
         and row["Home Team"] != row["Away Team"]
         and row["Home Score"] != row["Away Score"]
     ]
-
 
 def expected_score(rating_a, rating_b):
     return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
