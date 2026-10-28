@@ -12,6 +12,53 @@ st.set_page_config(
     layout="wide",
 )
 
+# Authentication is handled by Streamlit's OpenID Connect (OIDC) support.
+# Credentials stay in Streamlit secrets; no passwords or tokens are hard-coded.
+auth_config = st.secrets.get("auth", {})
+app_auth_config = st.secrets.get("app_auth", {})
+required_auth_settings = (
+    "redirect_uri",
+    "cookie_secret",
+    "client_id",
+    "client_secret",
+    "server_metadata_url",
+)
+missing_auth_settings = [
+    key for key in required_auth_settings if not auth_config.get(key)
+]
+allowed_emails = [
+    str(email).strip().lower()
+    for email in app_auth_config.get("allowed_emails", [])
+    if str(email).strip()
+]
+
+if missing_auth_settings or not allowed_emails:
+    st.title("🏆 AI Sports Analytics")
+    st.error("Sign-in is not configured yet, so the dashboard is locked.")
+    st.markdown(
+        "Follow the **Authentication setup** section in the repository README. "
+        "Add the OIDC values and an email allowlist to your local "
+        "`.streamlit/secrets.toml` or your host's Streamlit secrets settings. "
+        "Never commit real credentials to GitHub."
+    )
+    st.stop()
+
+if not st.user.is_logged_in:
+    st.title("🏆 AI Sports Analytics")
+    st.write("Sign in with your authorized Google account to access the dashboard.")
+    st.button("Sign in with Google", on_click=st.login)
+    st.stop()
+
+user_email = str(st.user.get("email", "")).strip().lower()
+email_verified = st.user.get("email_verified", False) is True
+
+if not email_verified or user_email not in allowed_emails:
+    st.title("🏆 AI Sports Analytics")
+    st.error("This Google account is not authorized to use this dashboard.")
+    st.caption("If you believe this is a mistake, ask the app administrator to add your verified email to the allowlist.")
+    st.button("Sign out", on_click=st.logout)
+    st.stop()
+
 SPORTS = {
     "NFL": {"category": "football", "league": "nfl", "home_adv": 55, "k": 24},
     "NBA": {"category": "basketball", "league": "nba", "home_adv": 65, "k": 20},
@@ -242,6 +289,9 @@ st.write(
 )
 
 with st.sidebar:
+    st.caption(f"Signed in as {user_email}")
+    st.button("Log out", on_click=st.logout)
+    st.divider()
     st.header("Dashboard settings")
     sport = st.selectbox("Choose a sport", list(SPORTS.keys()))
     days = st.slider("Historical window (days)", 14, 90, 60, step=7)
