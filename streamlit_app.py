@@ -207,6 +207,58 @@ def build_ratings(sport, history):
     return ratings, table, games_used
 
 
+
+def backtest_model(sport, history):
+    """Evaluate each historical game using ratings available before that game."""
+    info = SPORTS[sport]
+    ratings = {}
+    predictions = []
+    ordered_history = sorted(history, key=lambda game: game["Date"])
+
+    for game in ordered_history:
+        home = game["Home Team"]
+        away = game["Away Team"]
+        home_score = game["Home Score"]
+        away_score = game["Away Score"]
+
+        ratings.setdefault(home, 1500.0)
+        ratings.setdefault(away, 1500.0)
+
+        # Predict before using this game's final score to update ratings.
+        home_probability = expected_score(
+            ratings[home] + info["home_adv"], ratings[away]
+        )
+        actual_home_win = 1 if home_score > away_score else 0
+        predicted_home_win = 1 if home_probability >= 0.5 else 0
+
+        predictions.append({
+            "Date": game["Date"],
+            "Away Team": away,
+            "Home Team": home,
+            "Home Win Probability": home_probability,
+            "Actual Home Win": actual_home_win,
+            "Correct Pick": predicted_home_win == actual_home_win,
+            "Brier Contribution": (home_probability - actual_home_win) ** 2,
+        })
+
+        margin = abs(home_score - away_score)
+        margin_factor = min(1.5, math.log1p(margin) / 2.5 + 0.7)
+        change = info["k"] * margin_factor * (actual_home_win - home_probability)
+        ratings[home] += change
+        ratings[away] -= change
+
+    results = pd.DataFrame(predictions)
+    if results.empty:
+        return results, {"games": 0, "accuracy": None, "brier": None}
+
+    metrics = {
+        "games": len(results),
+        "accuracy": round(results["Correct Pick"].mean() * 100, 1),
+        "brier": round(results["Brier Contribution"].mean(), 4),
+    }
+    return results, metrics
+
+
 def make_predictions(sport, games, ratings):
     info = SPORTS[sport]
     predictions = []
@@ -279,10 +331,11 @@ try:
         "Teams start at 1500 for this window, so early-season ratings are less reliable."
     )
 
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📊 Team Ratings",
         "🎯 Game Predictions",
         "🏈 Scoreboard",
+        "📈 Historical Accuracy",
     ])
 
     with tab1:
@@ -359,6 +412,41 @@ try:
                 file_name=f"{sport.lower()}_scoreboard.csv",
                 mime="text/csv",
             )
+
+
+    with tab4:
+        st.subheader("Historical Prediction Accuracy")
+        st.caption(
+            "This replays completed games in date order. Each prediction uses "
+            "only earlier results; the current game's score is applied afterward. "
+            "This is a historical backtest, not a guarantee of future performance."
+        )
+        backtest_results, backtest_metrics = backtest_model(sport, history)
+        if backtest_results.empty:
+            st.info("Not enough completed games are available to evaluate this sport.")
+        else:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Games evaluated", backtest_metrics["games"])
+            m2.metric("Winner picks correct", f'{backtest_metrics["accuracy"]}%')
+            m3.metric("Brier score", backtest_metrics["brier"])
+            st.caption(
+                "For Brier score, lower is better; 0 is perfect. Accuracy and "
+                "Brier score describe this selected historical window only."
+            )
+            st.dataframe(
+                backtest_results[
+                    ["Date", "Away Team", "Home Team", "Correct Pick"]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.download_button(
+                "Download historical backtest CSV",
+                data=backtest_results.to_csv(index=False),
+                file_name=f"{sport.lower()}_historical_backtest.csv",
+                mime="text/csv",
+            )
+
 
     st.divider()
     st.caption(
