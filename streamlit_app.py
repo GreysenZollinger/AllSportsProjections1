@@ -209,13 +209,25 @@ def build_ratings(sport, history):
 
 
 def backtest_model(sport, history):
-    """Evaluate each historical game using ratings available before that game."""
+    """Walk-forward evaluation with an initial warm-up period and simple baseline."""
     info = SPORTS[sport]
     ratings = {}
     predictions = []
     ordered_history = sorted(history, key=lambda game: game["Date"])
 
-    for game in ordered_history:
+    if len(ordered_history) < 2:
+        return pd.DataFrame(), {
+            "training_games": len(ordered_history),
+            "games": 0,
+            "accuracy": None,
+            "baseline_accuracy": None,
+            "brier": None,
+        }
+
+    # Do not grade the cold-start games: use them to establish initial team ratings.
+    warmup_games = max(1, int(len(ordered_history) * 0.30))
+
+    for index, game in enumerate(ordered_history):
         home = game["Home Team"]
         away = game["Away Team"]
         home_score = game["Home Score"]
@@ -224,23 +236,25 @@ def backtest_model(sport, history):
         ratings.setdefault(home, 1500.0)
         ratings.setdefault(away, 1500.0)
 
-        # Predict before using this game's final score to update ratings.
+        # Make and record predictions only after warm-up, before updating on this game.
         home_probability = expected_score(
             ratings[home] + info["home_adv"], ratings[away]
         )
         actual_home_win = 1 if home_score > away_score else 0
-        predicted_home_win = 1 if home_probability >= 0.5 else 0
+        if index >= warmup_games:
+            predicted_home_win = 1 if home_probability >= 0.5 else 0
+            predictions.append({
+                "Date": game["Date"],
+                "Away Team": away,
+                "Home Team": home,
+                "Home Win Probability (%)": round(home_probability * 100, 1),
+                "Actual Home Win": actual_home_win,
+                "Correct Pick": predicted_home_win == actual_home_win,
+                "Home-Only Baseline Correct": actual_home_win == 1,
+                "Brier Contribution": (home_probability - actual_home_win) ** 2,
+            })
 
-        predictions.append({
-            "Date": game["Date"],
-            "Away Team": away,
-            "Home Team": home,
-            "Home Win Probability": home_probability,
-            "Actual Home Win": actual_home_win,
-            "Correct Pick": predicted_home_win == actual_home_win,
-            "Brier Contribution": (home_probability - actual_home_win) ** 2,
-        })
-
+        # Update ratings after this game's prediction opportunity.
         margin = abs(home_score - away_score)
         margin_factor = min(1.5, math.log1p(margin) / 2.5 + 0.7)
         change = info["k"] * margin_factor * (actual_home_win - home_probability)
@@ -249,11 +263,19 @@ def backtest_model(sport, history):
 
     results = pd.DataFrame(predictions)
     if results.empty:
-        return results, {"games": 0, "accuracy": None, "brier": None}
+        return results, {
+            "training_games": warmup_games,
+            "games": 0,
+            "accuracy": None,
+            "baseline_accuracy": None,
+            "brier": None,
+        }
 
     metrics = {
+        "training_games": warmup_games,
         "games": len(results),
         "accuracy": round(results["Correct Pick"].mean() * 100, 1),
+        "baseline_accuracy": round(results["Home-Only Baseline Correct"].mean() * 100, 1),
         "brier": round(results["Brier Contribution"].mean(), 4),
     }
     return results, metrics
@@ -425,17 +447,21 @@ try:
         if backtest_results.empty:
             st.info("Not enough completed games are available to evaluate this sport.")
         else:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Games evaluated", backtest_metrics["games"])
-            m2.metric("Winner picks correct", f'{backtest_metrics["accuracy"]}%')
-            m3.metric("Brier score", backtest_metrics["brier"])
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Warm-up games", backtest_metrics["training_games"])
+            m2.metric("Games evaluated", backtest_metrics["games"])
+            m3.metric("Model picks correct", f'{backtest_metrics["accuracy"]}%')
+            m4.metric("Always-pick-home baseline", f'{backtest_metrics["baseline_accuracy"]}%')
             st.caption(
-                "For Brier score, lower is better; 0 is perfect. Accuracy and "
-                "Brier score describe this selected historical window only."
+                "Only games after the warm-up period are scored. The baseline always "
+                "picks the home team. Brier score is calculated on evaluated games; "
+                "lower is better. This is a limited historical test, not a future guarantee."
             )
+            st.metric("Brier score (lower is better)", backtest_metrics["brier"])
             st.dataframe(
                 backtest_results[
-                    ["Date", "Away Team", "Home Team", "Correct Pick"]
+                    ["Date", "Away Team", "Home Team", "Home Win Probability (%)",
+                     "Correct Pick", "Home-Only Baseline Correct"]
                 ],
                 use_container_width=True,
                 hide_index=True,
