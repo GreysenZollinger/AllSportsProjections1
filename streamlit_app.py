@@ -473,6 +473,63 @@ try:
                 mime="text/csv",
             )
 
+        st.divider()
+        st.subheader("Accuracy by Sport")
+        st.caption(
+            "Compare the same walk-forward method across NFL, NBA, MLB, and NHL. "
+            "Each sport is evaluated independently; results may be unavailable "
+            "when ESPN has too little historical data."
+        )
+        if st.button("Run all-sport accuracy comparison", key="run_all_sport_accuracy"):
+            comparison_rows = []
+            progress = st.progress(0, text="Preparing sport-by-sport comparison...")
+            for index, comparison_sport in enumerate(SPORTS):
+                try:
+                    comparison_history = (
+                        history if comparison_sport == sport
+                        else get_history(comparison_sport, days)
+                    )
+                    _, comparison_metrics = backtest_model(
+                        comparison_sport, comparison_history
+                    )
+                    comparison_rows.append({
+                        "Sport": comparison_sport,
+                        "Games Available": len(comparison_history),
+                        "Warm-up Games": comparison_metrics["training_games"],
+                        "Games Evaluated": comparison_metrics["games"],
+                        "Model Accuracy (%)": comparison_metrics["accuracy"],
+                        "Home Baseline (%)": comparison_metrics["baseline_accuracy"],
+                        "Brier Score": comparison_metrics["brier"],
+                    })
+                except Exception as comparison_error:
+                    comparison_rows.append({
+                        "Sport": comparison_sport,
+                        "Games Available": None,
+                        "Warm-up Games": None,
+                        "Games Evaluated": 0,
+                        "Model Accuracy (%)": None,
+                        "Home Baseline (%)": None,
+                        "Brier Score": None,
+                    })
+                    st.warning(
+                        f"{comparison_sport} comparison unavailable: "
+                        f"{comparison_error}"
+                    )
+                progress.progress(
+                    (index + 1) / len(SPORTS),
+                    text=f"Compared {index + 1} of {len(SPORTS)} sports",
+                )
+            progress.empty()
+            comparison_table = pd.DataFrame(comparison_rows)
+            st.dataframe(comparison_table, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download all-sport accuracy CSV",
+                data=comparison_table.to_csv(index=False),
+                file_name="all_sports_accuracy_comparison.csv",
+                mime="text/csv",
+                key="download_all_sport_accuracy",
+            )
+
 
     st.divider()
     st.caption(
