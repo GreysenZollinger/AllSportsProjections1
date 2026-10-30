@@ -281,6 +281,155 @@ def backtest_model(sport, history):
     return results, metrics
 
 
+
+def _project_scores(home, away, team_scored, team_allowed, league_home_scores, league_away_scores):
+    """Estimate team scores using only games available before the forecast."""
+    all_scores = league_home_scores + league_away_scores
+    league_average = sum(all_scores) / len(all_scores) if all_scores else 1.0
+    league_home_average = (
+        sum(league_home_scores) / len(league_home_scores)
+        if league_home_scores else league_average
+    )
+    league_away_average = (
+        sum(league_away_scores) / len(league_away_scores)
+        if league_away_scores else league_average
+    )
+    home_edge = (league_home_average - league_away_average) / 2
+
+    def blended_average(values):
+        # Shrink small team samples toward the league average.
+        prior_weight = 5
+        return (sum(values) + league_average * prior_weight) / (
+            len(values) + prior_weight
+        )
+
+    home_offense = blended_average(team_scored.get(home, []))
+    away_offense = blended_average(team_scored.get(away, []))
+    home_defense = blended_average(team_allowed.get(home, []))
+    away_defense = blended_average(team_allowed.get(away, []))
+
+    projected_home = max(0.0, (home_offense + away_defense) / 2 + home_edge)
+    projected_away = max(0.0, (away_offense + home_defense) / 2 - home_edge)
+    return projected_home, projected_away
+
+
+def backtest_score_model(history):
+    """Walk-forward score projection test; each game is graded before its score is added."""
+    ordered_history = sorted(history, key=lambda game: game["Date"])
+    warmup_games = max(1, int(len(ordered_history) * 0.30)) if ordered_history else 0
+    team_scored = {}
+    team_allowed = {}
+    league_home_scores = []
+    league_away_scores = []
+    predictions = []
+
+    for index, game in enumerate(ordered_history):
+        home = game["Home Team"]
+        away = game["Away Team"]
+        actual_home = float(game["Home Score"])
+        actual_away = float(game["Away Score"])
+
+        if index >= warmup_games:
+            projected_home, projected_away = _project_scores(
+                home, away, team_scored, team_allowed,
+                league_home_scores, league_away_scores,
+            )
+            predictions.append({
+                "Date": game["Date"],
+                "Away Team": away,
+                "Home Team": home,
+                "Projected Away Score": round(projected_away, 2),
+                "Actual Away Score": actual_away,
+                "Projected Home Score": round(projected_home, 2),
+                "Actual Home Score": actual_home,
+                "Away Absolute Error": abs(projected_away - actual_away),
+                "Home Absolute Error": abs(projected_home - actual_home),
+            })
+
+        team_scored.setdefault(home, []).append(actual_home)
+        team_scored.setdefault(away, []).append(actual_away)
+        team_allowed.setdefault(home, []).append(actual_away)
+        team_allowed.setdefault(away, []).append(actual_home)
+        team_scored[home] = team_scored[home][-10:]
+        team_scored[away] = team_scored[away][-10:]
+        team_allowed[home] = team_allowed[home][-10:]
+        team_allowed[away] = team_allowed[away][-10:]
+        league_home_scores.append(actual_home)
+        league_away_scores.append(actual_away)
+        league_home_scores = league_home_scores[-200:]
+        league_away_scores = league_away_scores[-200:]
+
+    results = pd.DataFrame(predictions)
+    if results.empty:
+        return results, {
+            "training_games": warmup_games,
+            "games": 0,
+            "mae": None,
+            "rmse": None,
+            "home_mae": None,
+            "away_mae": None,
+        }
+
+    errors = pd.concat(
+        [results["Home Absolute Error"], results["Away Absolute Error"]],
+        ignore_index=True,
+    )
+    metrics = {
+        "training_games": warmup_games,
+        "games": len(results),
+        "mae": round(errors.mean(), 3),
+        "rmse": round(math.sqrt((errors ** 2).mean()), 3),
+        "home_mae": round(results["Home Absolute Error"].mean(), 3),
+        "away_mae": round(results["Away Absolute Error"].mean(), 3),
+    }
+    return results, metrics
+
+
+def make_score_predictions(games, history):
+    """Create pre-game score estimates from prior completed games only."""
+    predictions = []
+    ordered_history = sorted(history, key=lambda game: game["Date"])
+
+    for game in games:
+        if game["State"] not in ("pre", "in"):
+            continue
+        # Strictly earlier timestamps prevent same-day future games leaking in.
+        prior = [row for row in ordered_history if row["Date"] < game["Date"]]
+        team_scored = {}
+        team_allowed = {}
+        home_scores = []
+        away_scores = []
+
+        for row in prior:
+            home = row["Home Team"]
+            away = row["Away Team"]
+            hs = float(row["Home Score"])
+            aws = float(row["Away Score"])
+            team_scored.setdefault(home, []).append(hs)
+            team_scored.setdefault(away, []).append(aws)
+            team_allowed.setdefault(home, []).append(aws)
+            team_allowed.setdefault(away, []).append(hs)
+            team_scored[home] = team_scored[home][-10:]
+            team_scored[away] = team_scored[away][-10:]
+            team_allowed[home] = team_allowed[home][-10:]
+            team_allowed[away] = team_allowed[away][-10:]
+            home_scores.append(hs)
+            away_scores.append(aws)
+
+        projected_home, projected_away = _project_scores(
+            game["Home Team"], game["Away Team"],
+            team_scored, team_allowed, home_scores[-200:], away_scores[-200:],
+        )
+        predictions.append({
+            "Away Team": game["Away Team"],
+            "Projected Away Score": round(projected_away, 1),
+            "Home Team": game["Home Team"],
+            "Projected Home Score": round(projected_home, 1),
+        })
+
+    return pd.DataFrame(predictions)
+
+
 def make_predictions(sport, games, ratings):
     info = SPORTS[sport]
     predictions = []
@@ -342,6 +491,11 @@ try:
         history = get_history(sport, days)
         ratings, rating_table, games_used = build_ratings(sport, history)
         predictions = make_predictions(sport, current_games, ratings)
+        score_predictions = make_score_predictions(current_games, history)
+        if not predictions.empty and not score_predictions.empty:
+            predictions = predictions.merge(
+                score_predictions, on=["Away Team", "Home Team"], how="left"
+            )
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Games in current scoreboard", len(current_games))
@@ -399,7 +553,8 @@ try:
                     [
                         "Away Team", "Away Win Chance (%)",
                         "Home Team", "Home Win Chance (%)",
-                        "Model Lean", "Status", "Note",
+                        "Model Lean", "Projected Away Score",
+                        "Projected Home Score", "Status", "Note",
                     ]
                 ],
                 use_container_width=True,
@@ -470,6 +625,36 @@ try:
                 "Download historical backtest CSV",
                 data=backtest_results.to_csv(index=False),
                 file_name=f"{sport.lower()}_historical_backtest.csv",
+                mime="text/csv",
+            )
+
+        st.divider()
+        st.subheader("Projected Score Accuracy")
+        score_results, score_metrics = backtest_score_model(history)
+        if score_results.empty:
+            st.info("Not enough completed games to evaluate score projections.")
+        else:
+            sm1, sm2, sm3 = st.columns(3)
+            sm1.metric("Games evaluated", score_metrics["games"])
+            sm2.metric("Mean absolute error (MAE)", score_metrics["mae"])
+            sm3.metric("Root mean squared error (RMSE)", score_metrics["rmse"])
+            st.caption(
+                "Score errors are measured in points/runs/goals. Lower is better. "
+                "Each estimate uses only earlier completed games; the current game's "
+                "score is added after its forecast is recorded."
+            )
+            st.dataframe(
+                score_results[
+                    ["Date", "Away Team", "Projected Away Score", "Actual Away Score",
+                     "Home Team", "Projected Home Score", "Actual Home Score"]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.download_button(
+                "Download score projection backtest CSV",
+                data=score_results.to_csv(index=False),
+                file_name=f"{sport.lower()}_score_projection_backtest.csv",
                 mime="text/csv",
             )
 
