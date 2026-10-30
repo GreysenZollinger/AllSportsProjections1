@@ -103,3 +103,52 @@ def test_backtest_handles_too_little_history():
     assert metrics["games"] == 0
     assert metrics["accuracy"] is None
 
+
+
+def load_score_backtest():
+    import math
+    import pandas as pd
+
+    source_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    function_nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"_project_scores", "backtest_score_model"}
+    ]
+    module = ast.Module(body=function_nodes, type_ignores=[])
+    namespace = {"math": math, "pd": pd}
+    exec(compile(module, str(source_path), "exec"), namespace)
+    return namespace["backtest_score_model"]
+
+
+backtest_score_model = load_score_backtest()
+
+
+def test_score_backtest_is_walk_forward_and_reports_error_metrics():
+    history = []
+    for index in range(12):
+        history.append({
+            "Date": f"2026-01-{index + 1:02d}",
+            "Away Team": "Away",
+            "Home Team": "Home",
+            "Away Score": 10 + index,
+            "Home Score": 14 + index,
+        })
+
+    results, metrics = backtest_score_model(history)
+
+    assert metrics["training_games"] == 3
+    assert metrics["games"] == 9
+    assert len(results) == 9
+    assert metrics["mae"] >= 0
+    assert metrics["rmse"] >= metrics["mae"]
+    assert metrics["home_mae"] >= 0
+    assert metrics["away_mae"] >= 0
+
+
+def test_score_backtest_handles_empty_history():
+    results, metrics = backtest_score_model([])
+    assert results.empty
+    assert metrics["games"] == 0
+    assert metrics["mae"] is None
