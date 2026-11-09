@@ -281,9 +281,30 @@ def backtest_model(sport, history):
     return results, metrics
 
 
-def make_predictions(sport, games, ratings):
+def make_predictions(sport, games, ratings, history):
     info = SPORTS[sport]
     predictions = []
+
+    # Estimate each team's scoring and points allowed from completed games only.
+    # These are descriptive baseline estimates, not betting-line recommendations.
+    scoring = {}
+    for game in history:
+        for team, scored, allowed in (
+            (game["Home Team"], game["Home Score"], game["Away Score"]),
+            (game["Away Team"], game["Away Score"], game["Home Score"]),
+        ):
+            scoring.setdefault(team, {"for": [], "against": []})
+            scoring[team]["for"].append(float(scored))
+            scoring[team]["against"].append(float(allowed))
+
+    league_scored = [
+        float(g["Home Score"]) for g in history
+    ] + [float(g["Away Score"]) for g in history]
+    league_average = sum(league_scored) / len(league_scored) if league_scored else 0.0
+
+    def team_average(team, key):
+        values = scoring.get(team, {}).get(key, [])
+        return sum(values) / len(values) if values else league_average
 
     for game in games:
         home = game["Home Team"]
@@ -299,10 +320,21 @@ def make_predictions(sport, games, ratings):
             home_rating + info["home_adv"], away_rating
         )
 
+        # Blend a team's scoring rate with its opponent's points-allowed rate.
+        # Use only completed games in the selected historical window.
+        away_projected = (
+            team_average(away, "for") + team_average(home, "against")
+        ) / 2
+        home_projected = (
+            team_average(home, "for") + team_average(away, "against")
+        ) / 2
+        projected_total = home_projected + away_projected
+        projected_margin = home_projected - away_projected
+
         if game["State"] == "in":
-            note = "In progress — estimate may change"
+            note = "In progress — pre-game baseline; not a live in-game model"
         else:
-            note = "Pre-game estimate"
+            note = "Pre-game estimate from recent team scoring"
 
         predictions.append({
             "Date": game["Date"],
@@ -313,6 +345,14 @@ def make_predictions(sport, games, ratings):
             "Away Win Chance (%)": round((1 - home_probability) * 100, 1),
             "Home Win Chance (%)": round(home_probability * 100, 1),
             "Model Lean": home if home_probability >= 0.5 else away,
+            "Projected Away Score": round(away_projected, 1),
+            "Projected Home Score": round(home_projected, 1),
+            "Projected Margin (Home)": round(projected_margin, 1),
+            "Projected Total Score": round(projected_total, 1),
+            "Scoring Sample (games)": min(
+                len(scoring.get(home, {}).get("for", [])),
+                len(scoring.get(away, {}).get("for", [])),
+            ),
             "Status": game["Status"],
             "Note": note,
         })
@@ -322,7 +362,7 @@ def make_predictions(sport, games, ratings):
 
 st.title("🏆 AI Sports Analytics")
 st.write(
-    "Multi-sport team ratings and game estimates based on recent completed results."
+    "Upcoming game winner probabilities and score estimates based on recent completed results."
 )
 
 with st.sidebar:
@@ -341,7 +381,7 @@ try:
         current_games = get_current_games(sport)
         history = get_history(sport, days)
         ratings, rating_table, games_used = build_ratings(sport, history)
-        predictions = make_predictions(sport, current_games, ratings)
+        predictions = make_predictions(sport, current_games, ratings, history)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Games in current scoreboard", len(current_games))
@@ -382,10 +422,11 @@ try:
             )
 
     with tab2:
-        st.subheader("Game Winner Estimates")
+        st.subheader("Upcoming Game Forecasts")
         st.caption(
-            "Probabilities are model estimates, not guarantees. "
-            "They are based on Elo-style ratings and home advantage."
+            "Win chances use Elo-style team ratings. Score, margin, and total estimates "
+            "blend each team's recent scoring with its opponent's points allowed. "
+            "Sample size is shown; these are unvalidated statistical estimates, not guarantees."
         )
 
         if predictions.empty:
@@ -399,7 +440,10 @@ try:
                     [
                         "Away Team", "Away Win Chance (%)",
                         "Home Team", "Home Win Chance (%)",
-                        "Model Lean", "Status", "Note",
+                        "Model Lean", "Projected Away Score",
+                        "Projected Home Score", "Projected Margin (Home)",
+                        "Projected Total Score", "Scoring Sample (games)",
+                        "Status", "Note",
                     ]
                 ],
                 use_container_width=True,
