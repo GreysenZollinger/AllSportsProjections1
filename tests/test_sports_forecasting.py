@@ -152,6 +152,50 @@ class DataRetrievalTests(unittest.TestCase):
 
 
 class ForecastModelTests(unittest.TestCase):
+    def test_score_mae_compares_model_and_baseline_on_matching_scores(self) -> None:
+        predictions = [
+            {
+                "home_outcome": 1.0,
+                "home_probability": 0.6,
+                "raw_home_probability": 0.6,
+                "home_projected_score": 10.0,
+                "away_projected_score": 20.0,
+                "baseline_home_score": 12.0,
+                "baseline_away_score": 22.0,
+                "actual_home_score": 11.0,
+                "actual_away_score": 21.0,
+            },
+            {
+                "home_outcome": 0.0,
+                "home_probability": 0.4,
+                "raw_home_probability": 0.4,
+                "home_projected_score": 15.0,
+                "away_projected_score": None,
+                "baseline_home_score": None,
+                "baseline_away_score": 18.0,
+                "actual_home_score": 13.0,
+                "actual_away_score": 17.0,
+            },
+            {
+                "home_outcome": 1.0,
+                "home_probability": 0.7,
+                "raw_home_probability": 0.7,
+                "home_projected_score": 8.0,
+                "away_projected_score": 7.0,
+                "baseline_home_score": 9.0,
+                "baseline_away_score": 7.0,
+                "actual_home_score": 10.0,
+                "actual_away_score": 7.0,
+            },
+        ]
+
+        metrics = forecasting._metrics(predictions)
+
+        self.assertEqual(metrics["score_games"], 2)
+        self.assertEqual(metrics["score_observations"], 4)
+        self.assertAlmostEqual(metrics["score_mae"], 1.0)
+        self.assertAlmostEqual(metrics["baseline_score_mae"], 0.75)
+
     def test_all_four_sports_produce_finite_forecasts(self) -> None:
         history = [
             game(index, home_score=3 + index % 4, away_score=2 + index % 3)
