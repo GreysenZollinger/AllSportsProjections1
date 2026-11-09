@@ -197,6 +197,63 @@ try:
             "or when you press Refresh sports data."
         )
 
+        st.divider()
+        st.subheader("All four sports")
+        st.caption(
+            "Load the current eight-day scoreboard window for NFL, NBA, MLB, and NHL."
+        )
+        if st.button("Load all four sports scoreboards", key="load_all_sports"):
+            all_sports_rows = []
+            failures = []
+            progress = st.progress(0, text="Loading all four sports...")
+            for index, comparison_sport in enumerate(SPORTS):
+                try:
+                    sport_games = load_current_games(comparison_sport)
+                    for game in sport_games:
+                        all_sports_rows.append({
+                            "Sport": comparison_sport,
+                            "Date": game["Date"],
+                            "Away Team": game["Away Team"],
+                            "Away Score": game["Away Score"],
+                            "Home Team": game["Home Team"],
+                            "Home Score": game["Home Score"],
+                            "Status": game["Status"],
+                            "State": game["State"],
+                        })
+                except forecasting.SportsDataError as scoreboard_error:
+                    failures.append(
+                        f"{comparison_sport}: {scoreboard_error}"
+                    )
+                progress.progress(
+                    (index + 1) / len(SPORTS),
+                    text=f"Loaded {index + 1} of {len(SPORTS)} sports",
+                )
+            progress.empty()
+            if all_sports_rows:
+                all_sports_table = pd.DataFrame(all_sports_rows)
+                all_sports_table["Date"] = pd.to_datetime(
+                    all_sports_table["Date"], utc=True, errors="coerce"
+                )
+                all_sports_table = all_sports_table.sort_values(
+                    ["Sport", "Date"]
+                )
+                st.dataframe(
+                    all_sports_table,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.download_button(
+                    "Download all-sports scoreboard",
+                    all_sports_table.to_csv(index=False),
+                    file_name="all_sports_scoreboard.csv",
+                    mime="text/csv",
+                    key="download_all_sports_scoreboard",
+                )
+            else:
+                st.warning("No scoreboard data was returned for any sport.")
+            for failure in failures:
+                st.warning(failure)
+
     with ratings_tab:
         st.subheader("Team performance ratings")
         if rating_table.empty:
@@ -436,5 +493,5 @@ except forecasting.SportsDataError as error:
     st.warning(str(error))
     st.info("Try Refresh sports data again later.")
 except Exception as error:
-    st.error("The dashboard encountered an unexpected error.")
-    st.exception(error)
+    st.error("The dashboard couldn't finish loading. Try Refresh sports data.")
+    st.caption(f"Technical detail: {type(error).__name__}: {error}")
