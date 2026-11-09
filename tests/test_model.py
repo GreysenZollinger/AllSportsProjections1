@@ -258,3 +258,37 @@ def test_score_backtest_does_not_leak_results_between_same_day_games():
     assert metrics["games"] == 2
     assert results.iloc[0]["Projected Home Score"] == results.iloc[1]["Projected Home Score"]
     assert results.iloc[0]["Projected Away Score"] == results.iloc[1]["Projected Away Score"]
+
+
+def test_score_backtest_uses_venue_splits_with_shrinkage():
+    history = []
+    # Warm-up dates establish a sample for both venues.
+    for index in range(6):
+        history.append({
+            "Date": f"2026-04-{index + 1:02d}T12:00:00Z",
+            "Away Team": "A",
+            "Home Team": "B",
+            "Away Score": 10,
+            "Home Score": 20,
+        })
+    history.extend([
+        {
+            "Date": "2026-04-07T12:00:00Z",
+            "Away Team": "A",
+            "Home Team": "B",
+            "Away Score": 10,
+            "Home Score": 20,
+        },
+        {
+            "Date": "2026-04-08T12:00:00Z",
+            "Away Team": "A",
+            "Home Team": "B",
+            "Away Score": 10,
+            "Home Score": 20,
+        },
+    ])
+    results, metrics = backtest_score_forecasts(history)
+    assert metrics["games"] == 2
+    assert results["Projected Home Score"].notna().all()
+    assert results["Projected Away Score"].notna().all()
+    assert (results["Projected Home Score"] > results["Projected Away Score"]).all()
