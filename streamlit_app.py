@@ -305,14 +305,22 @@ def backtest_model(sport, history):
     return results, metrics
 
 
+def weighted_recent_average(values, decay=0.85):
+    """Average a chronological series with more weight on the newest result."""
+    if not values:
+        return None
+    weights = [decay ** (len(values) - index - 1) for index in range(len(values))]
+    return sum(value * weight for value, weight in zip(values, weights)) / sum(weights)
+
+
 def make_predictions(sport, games, ratings, history):
     info = SPORTS[sport]
     predictions = []
 
-    # Estimate each team's scoring and points allowed from completed games only.
-    # These are descriptive baseline estimates, not betting-line recommendations.
+    # Keep the ten most recent completed games for each team's scoring profile.
+    # Recent results matter more, while shrinkage limits tiny-sample extremes.
     scoring = {}
-    for game in history:
+    for game in sorted(history, key=lambda row: row["Date"]):
         for team, scored, allowed in (
             (game["Home Team"], game["Home Score"], game["Away Score"]),
             (game["Away Team"], game["Away Score"], game["Home Score"]),
@@ -321,6 +329,10 @@ def make_predictions(sport, games, ratings, history):
             scoring[team]["for"].append(float(scored))
             scoring[team]["against"].append(float(allowed))
 
+    for team_stats in scoring.values():
+        team_stats["for"] = team_stats["for"][-10:]
+        team_stats["against"] = team_stats["against"][-10:]
+
     league_scored = [
         float(g["Home Score"]) for g in history
     ] + [float(g["Away Score"]) for g in history]
@@ -328,7 +340,12 @@ def make_predictions(sport, games, ratings, history):
 
     def team_average(team, key):
         values = scoring.get(team, {}).get(key, [])
-        return sum(values) / len(values) if values else league_average
+        recent_average = weighted_recent_average(values)
+        if recent_average is None:
+            return league_average
+        # Four pseudo-games at league average reduce overreaction to small samples.
+        reliability = len(values) / (len(values) + 4)
+        return reliability * recent_average + (1 - reliability) * league_average
 
     for game in games:
         home = game["Home Team"]
