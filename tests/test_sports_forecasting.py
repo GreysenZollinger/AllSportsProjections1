@@ -222,6 +222,8 @@ class ForecastModelTests(unittest.TestCase):
                 self.assertTrue(
                     0 <= prediction["Home Win Chance (%)"] <= 100
                 )
+                self.assertNotIn("Home Fair Moneyline", prediction.index)
+                self.assertNotIn("Away Fair Moneyline", prediction.index)
                 self.assertAlmostEqual(
                     prediction["Home Win Chance (%)"]
                     + prediction["Away Win Chance (%)"],

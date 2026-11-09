@@ -309,10 +309,7 @@ try:
             )
             st.download_button(
                 "Download game estimates",
-                pregame.drop(
-                    columns=["Away Fair Moneyline", "Home Fair Moneyline"],
-                    errors="ignore",
-                ).to_csv(index=False),
+                pregame.to_csv(index=False),
                 file_name=f"{sport.lower()}_game_estimates.csv",
                 mime="text/csv",
             )
