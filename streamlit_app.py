@@ -85,6 +85,30 @@ def get_current_games(sport):
     return parse_events(response.json().get("events", []))
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_upcoming_games(sport, days=7):
+    """Fetch today's and the next several days of scheduled/live games."""
+    start_date = date.today()
+    rows_by_event = {}
+    for offset in range(days + 1):
+        game_date = start_date + timedelta(days=offset)
+        response = requests.get(
+            scoreboard_url(sport),
+            params={"dates": game_date.strftime("%Y%m%d"), "limit": 100},
+            timeout=25,
+        )
+        response.raise_for_status()
+        for row in parse_events(response.json().get("events", [])):
+            if row["State"] not in ("pre", "in"):
+                continue
+            event_id = row.get("Event ID")
+            key = str(event_id) if event_id else (
+                f"{row['Date']}|{row['Away Team']}|{row['Home Team']}"
+            )
+            rows_by_event[key] = row
+    return sorted(rows_by_event.values(), key=lambda row: row["Date"])
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_history(sport, days):
     """Fetch history one calendar day at a time."""
@@ -374,17 +398,18 @@ with st.sidebar:
 
 if refresh:
     get_current_games.clear()
+    get_upcoming_games.clear()
     get_history.clear()
 
 try:
     with st.spinner(f"Loading {sport} data and calculating ratings..."):
-        current_games = get_current_games(sport)
+        current_games = get_upcoming_games(sport, 7)
         history = get_history(sport, days)
         ratings, rating_table, games_used = build_ratings(sport, history)
         predictions = make_predictions(sport, current_games, ratings, history)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Games in current scoreboard", len(current_games))
+    c1.metric("Upcoming / live games (7 days)", len(current_games))
     c2.metric("Completed games used", games_used)
     c3.metric("Teams rated", len(rating_table))
 
@@ -431,8 +456,8 @@ try:
 
         if predictions.empty:
             st.info(
-                "No upcoming or in-progress games were returned by the current "
-                "scoreboard. Check back closer to game time."
+                "No upcoming or in-progress games were returned for the next 7 days. "
+                "Refresh later or check ESPN schedule availability."
             )
         else:
             st.dataframe(
@@ -459,7 +484,7 @@ try:
     with tab3:
         st.subheader(f"{sport} Scoreboard")
         if not current_games:
-            st.info("No games were returned for the current scoreboard.")
+            st.info("No upcoming or live games were returned for the next 7 days.")
         else:
             scoreboard = pd.DataFrame(current_games)
             st.dataframe(
