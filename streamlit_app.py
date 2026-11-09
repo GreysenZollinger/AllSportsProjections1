@@ -321,6 +321,91 @@ try:
         )
 
     with accuracy_tab:
+        st.subheader("All-sports accuracy comparison")
+        st.caption(
+            "Compare each sport using chronological walk-forward testing. "
+            "The model only uses games completed before each evaluation date."
+        )
+        if st.button(
+            "Run accuracy comparison for all four sports",
+            key="run_all_sports_accuracy",
+        ):
+            comparison_rows = []
+            progress = st.progress(0, text="Evaluating all four sports...")
+            for index, comparison_sport in enumerate(SPORTS):
+                try:
+                    comparison_history = load_completed_history(
+                        comparison_sport, history_days
+                    )
+                    comparison = forecasting.walk_forward_backtest(
+                        comparison_sport,
+                        comparison_history,
+                        min_train_games=20,
+                    )
+                    result = comparison["metrics"]
+                    brier = result.get("brier_score")
+                    baseline_brier = result.get("baseline_brier_score")
+                    score_mae = result.get("score_mae")
+                    baseline_mae = result.get("baseline_score_mae")
+                    comparison_rows.append({
+                        "Sport": comparison_sport,
+                        "Games evaluated": result.get("games", 0),
+                        "Winner accuracy (%)": (
+                            round(result["accuracy"] * 100, 1)
+                            if result.get("accuracy") is not None else None
+                        ),
+                        "Model Brier": brier,
+                        "Baseline Brier": baseline_brier,
+                        "Brier improvement": (
+                            round(baseline_brier - brier, 4)
+                            if brier is not None and baseline_brier is not None
+                            else None
+                        ),
+                        "Model score MAE": score_mae,
+                        "Baseline score MAE": baseline_mae,
+                        "Score MAE improvement": (
+                            round(baseline_mae - score_mae, 3)
+                            if score_mae is not None and baseline_mae is not None
+                            else None
+                        ),
+                    })
+                except forecasting.SportsDataError as comparison_error:
+                    comparison_rows.append({
+                        "Sport": comparison_sport,
+                        "Error": str(comparison_error),
+                    })
+                progress.progress(
+                    (index + 1) / len(SPORTS),
+                    text=f"Evaluated {index + 1} of {len(SPORTS)} sports",
+                )
+            progress.empty()
+            if comparison_rows:
+                comparison_table = pd.DataFrame(comparison_rows)
+                st.dataframe(
+                    comparison_table,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.download_button(
+                    "Download all-sports accuracy comparison",
+                    comparison_table.to_csv(index=False),
+                    file_name="all_sports_accuracy_comparison.csv",
+                    mime="text/csv",
+                    key="download_all_sports_accuracy",
+                )
+                valid_rows = comparison_table.dropna(
+                    subset=["Brier improvement", "Score MAE improvement"],
+                    how="all",
+                )
+                if not valid_rows.empty:
+                    st.info(
+                        "Positive improvement means the model beat its baseline. "
+                        "Negative improvement means the baseline performed better. "
+                        "Compare both metrics and the number of evaluated games; "
+                        "a small sample can be misleading."
+                    )
+
+        st.divider()
         st.subheader("Historical walk-forward evaluation")
         st.write(
             "Each historical game is evaluated using information available before "
