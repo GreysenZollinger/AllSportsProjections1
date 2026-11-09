@@ -103,3 +103,37 @@ def test_backtest_handles_too_little_history():
     assert metrics["games"] == 0
     assert metrics["accuracy"] is None
 
+
+
+
+def load_weighted_recent_average():
+    source_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    function_node = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "weighted_recent_average"
+    )
+    module = ast.Module(body=[function_node], type_ignores=[])
+    namespace = {}
+    exec(compile(module, str(source_path), "exec"), namespace)
+    return namespace["weighted_recent_average"]
+
+
+weighted_recent_average = load_weighted_recent_average()
+
+
+def test_weighted_average_favors_newer_results():
+    assert weighted_recent_average([10, 20]) > 15
+
+
+def test_weighted_average_handles_single_value():
+    assert weighted_recent_average([7]) == 7
+
+
+def test_weighted_average_returns_none_for_no_data():
+    assert weighted_recent_average([]) is None
+
+
+def test_weighted_average_can_use_equal_weights():
+    assert weighted_recent_average([10, 20, 30], decay=1.0) == 20
