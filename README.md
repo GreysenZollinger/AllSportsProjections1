@@ -2,6 +2,12 @@
 
 A Streamlit dashboard for NFL, NBA, MLB, and NHL team ratings, pregame estimates, score projections, and accuracy tracking. It prioritizes free public data sources and does not require paid API subscriptions.
 
+## Deploy as a permanent website
+
+The repository is prepared for Streamlit Community Cloud. To publish it, sign in to [Streamlit Community Cloud](https://share.streamlit.io/), choose **New app**, select this GitHub repository, choose the `deploy/streamlit-cloud-ready` branch, and set the main file to `streamlit_app.py`. Streamlit will install the packages from `requirements.txt` and publish a hosted URL. This one-time account authorization and deployment click must be completed by the repository owner; it cannot be done from this chat. The hosted app uses the same free ESPN public scoreboard source.
+
+**Important:** the current forecast-history database is a local SQLite file. On hosted services with ephemeral storage, saved forecast history may reset when the app is rebuilt or restarted. Live scoreboards and backtests continue to load from ESPN.
+
 ## Run in GitHub Codespaces
 
 Open the repository in Codespaces, then run:
