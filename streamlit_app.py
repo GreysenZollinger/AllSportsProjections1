@@ -474,6 +474,32 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
     return results, metrics
 
 
+
+def select_scoring_window(history, candidates=(5, 10, 15), min_games=12):
+    """Choose a recent-form window using walk-forward total-score MAE only."""
+    rows = []
+    for window in candidates:
+        _, metrics = backtest_score_forecasts(history, window=window)
+        if metrics["games"] >= min_games and metrics["total_mae"] is not None:
+            rows.append({
+                "Window (games)": window,
+                "Games evaluated": metrics["games"],
+                "Total MAE": metrics["total_mae"],
+                "Margin MAE": metrics["margin_mae"],
+            })
+
+    comparison = pd.DataFrame(rows)
+    if comparison.empty:
+        return comparison, 10
+
+    # Prefer the shorter window on exact ties to adapt more quickly.
+    best = comparison.sort_values(
+        ["Total MAE", "Window (games)"],
+        ascending=[True, True],
+    ).iloc[0]
+    return comparison, int(best["Window (games)"])
+
+
 def weighted_recent_average(values, decay=0.85):
     """Average a chronological series with more weight on the newest result."""
     if not values:
@@ -482,7 +508,7 @@ def weighted_recent_average(values, decay=0.85):
     return sum(value * weight for value, weight in zip(values, weights)) / sum(weights)
 
 
-def make_predictions(sport, games, ratings, history):
+def make_predictions(sport, games, ratings, history, window=10):
     info = SPORTS[sport]
     predictions = []
 
@@ -509,7 +535,7 @@ def make_predictions(sport, games, ratings, history):
 
     for team_stats in scoring.values():
         for values in team_stats.values():
-            values[:] = values[-10:]
+            values[:] = values[-window:]
 
     league_scored = [
         float(g["Home Score"]) for g in history
@@ -612,7 +638,7 @@ try:
         current_games = get_upcoming_games(sport, 7)
         history = get_history(sport, days)
         ratings, rating_table, games_used = build_ratings(sport, history)
-        predictions = make_predictions(sport, current_games, ratings, history)
+        window_comparison, selected_window = select_scoring_window(history)\n        predictions = make_predictions(\n            sport, current_games, ratings, history, window=selected_window\n        )
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Upcoming / live games (7 days)", len(current_games))
@@ -735,7 +761,7 @@ try:
             st.metric("Brier score (lower is better)", backtest_metrics["brier"])
 
         st.divider()
-        st.subheader("Score and Margin Forecast Accuracy")
+        st.subheader("Recent-Form Window Validation")\n        st.caption(\n            "The app compares 5-, 10-, and 15-game scoring windows using walk-forward total-score error. The lowest validated MAE is selected for upcoming score forecasts when enough games are available; otherwise the default is 10 games."\n        )\n        if window_comparison.empty:\n            st.info("Not enough historical games to select a scoring window reliably; using the 10-game default.")\n        else:\n            st.write(f"Selected scoring window: **{selected_window} games**")\n            st.dataframe(window_comparison, use_container_width=True, hide_index=True)\n\n        st.subheader("Score and Margin Forecast Accuracy")
         st.caption(
             "Walk-forward test: each game is forecast using only earlier completed games. "
             "MAE is the average absolute difference between the forecast and final result; "

@@ -292,3 +292,50 @@ def test_score_backtest_uses_venue_splits_with_shrinkage():
     assert results["Projected Home Score"].notna().all()
     assert results["Projected Away Score"].notna().all()
     assert (results["Projected Home Score"] > results["Projected Away Score"]).all()
+
+
+def load_select_scoring_window():
+    import math
+    import pandas as pd
+
+    source_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    function_nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {
+            "select_scoring_window", "backtest_score_forecasts",
+            "weighted_recent_average",
+        }
+    ]
+    module = ast.Module(body=function_nodes, type_ignores=[])
+    namespace = {"pd": pd}
+    exec(compile(module, str(source_path), "exec"), namespace)
+    return namespace["select_scoring_window"]
+
+
+select_scoring_window = load_select_scoring_window()
+
+
+def test_window_selector_uses_only_validated_candidates():
+    history = []
+    for index in range(45):
+        # A stable scoring pattern makes all candidates evaluable; the
+        # selector must return one of the tested windows, never a guess.
+        history.append({
+            "Date": f"2026-05-{index + 1:02d}T12:00:00Z",
+            "Away Team": "A",
+            "Home Team": "B",
+            "Away Score": 10 + (index % 2),
+            "Home Score": 20 + (index % 2),
+        })
+    comparison, selected = select_scoring_window(history, min_games=5)
+    assert set(comparison["Window (games)"]) == {5, 10, 15}
+    assert selected in {5, 10, 15}
+    assert comparison["Total MAE"].notna().all()
+
+
+def test_window_selector_falls_back_when_history_is_insufficient():
+    comparison, selected = select_scoring_window([], min_games=5)
+    assert comparison.empty
+    assert selected == 10
