@@ -305,6 +305,98 @@ def backtest_model(sport, history):
     return results, metrics
 
 
+def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
+    """Walk-forward score, margin, and total evaluation without future-data leakage."""
+    ordered = sorted(history, key=lambda game: game["Date"])
+    warmup = max(1, int(len(ordered) * warmup_fraction)) if ordered else 0
+    team_history = {}
+    predictions = []
+
+    for index, game in enumerate(ordered):
+        home = game["Home Team"]
+        away = game["Away Team"]
+        actual_home = float(game["Home Score"])
+        actual_away = float(game["Away Score"])
+
+        if index >= warmup:
+            all_scores = [
+                score
+                for values in team_history.values()
+                for score in values["for"]
+            ]
+            league_average = (
+                sum(all_scores) / len(all_scores) if all_scores else 0.0
+            )
+
+            def estimate(team, key):
+                values = team_history.get(team, {}).get(key, [])[-window:]
+                recent = weighted_recent_average(values)
+                if recent is None:
+                    return league_average
+                reliability = len(values) / (len(values) + 4)
+                return reliability * recent + (1 - reliability) * league_average
+
+            predicted_home = (
+                estimate(home, "for") + estimate(away, "against")
+            ) / 2
+            predicted_away = (
+                estimate(away, "for") + estimate(home, "against")
+            ) / 2
+            predicted_margin = predicted_home - predicted_away
+            predicted_total = predicted_home + predicted_away
+
+            predictions.append({
+                "Date": game["Date"],
+                "Away Team": away,
+                "Home Team": home,
+                "Projected Away Score": predicted_away,
+                "Actual Away Score": actual_away,
+                "Projected Home Score": predicted_home,
+                "Actual Home Score": actual_home,
+                "Projected Margin (Home)": predicted_margin,
+                "Actual Margin (Home)": actual_home - actual_away,
+                "Projected Total": predicted_total,
+                "Actual Total": actual_home + actual_away,
+                "Home Score Absolute Error": abs(predicted_home - actual_home),
+                "Away Score Absolute Error": abs(predicted_away - actual_away),
+                "Margin Absolute Error": abs(
+                    predicted_margin - (actual_home - actual_away)
+                ),
+                "Total Absolute Error": abs(
+                    predicted_total - (actual_home + actual_away)
+                ),
+            })
+
+        for team, scored, allowed in (
+            (home, actual_home, actual_away),
+            (away, actual_away, actual_home),
+        ):
+            team_history.setdefault(team, {"for": [], "against": []})
+            team_history[team]["for"].append(scored)
+            team_history[team]["against"].append(allowed)
+
+    results = pd.DataFrame(predictions)
+    if results.empty:
+        return results, {
+            "training_games": warmup,
+            "games": 0,
+            "home_score_mae": None,
+            "away_score_mae": None,
+            "margin_mae": None,
+            "total_mae": None,
+        }
+
+    metrics = {
+        "training_games": warmup,
+        "games": len(results),
+        "home_score_mae": round(results["Home Score Absolute Error"].mean(), 2),
+        "away_score_mae": round(results["Away Score Absolute Error"].mean(), 2),
+        "margin_mae": round(results["Margin Absolute Error"].mean(), 2),
+        "total_mae": round(results["Total Absolute Error"].mean(), 2),
+    }
+    return results, metrics
+
+
 def weighted_recent_average(values, decay=0.85):
     """Average a chronological series with more weight on the newest result."""
     if not values:
@@ -544,6 +636,45 @@ try:
                 "lower is better. This is a limited historical test, not a future guarantee."
             )
             st.metric("Brier score (lower is better)", backtest_metrics["brier"])
+
+        st.divider()
+        st.subheader("Score and Margin Forecast Accuracy")
+        st.caption(
+            "Walk-forward test: each game is forecast using only earlier completed games. "
+            "MAE is the average absolute difference between the forecast and final result; "
+            "lower is better. Scores are in each sport's normal scoring units."
+        )
+        score_results, score_metrics = backtest_score_forecasts(history)
+        if score_results.empty:
+            st.info("Not enough completed games are available for score-forecast testing.")
+        else:
+            sm1, sm2, sm3, sm4 = st.columns(4)
+            sm1.metric("Home score MAE", score_metrics["home_score_mae"])
+            sm2.metric("Away score MAE", score_metrics["away_score_mae"])
+            sm3.metric("Margin MAE", score_metrics["margin_mae"])
+            sm4.metric("Total MAE", score_metrics["total_mae"])
+            st.caption(
+                f"{score_metrics['games']} games evaluated after "
+                f"{score_metrics['training_games']} warm-up games."
+            )
+            st.dataframe(
+                score_results[
+                    ["Date", "Away Team", "Home Team",
+                     "Projected Away Score", "Actual Away Score",
+                     "Projected Home Score", "Actual Home Score",
+                     "Projected Margin (Home)", "Actual Margin (Home)",
+                     "Projected Total", "Actual Total"]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.download_button(
+                "Download score and margin backtest CSV",
+                data=score_results.to_csv(index=False),
+                file_name=f"{sport.lower()}_score_margin_backtest.csv",
+                mime="text/csv",
+            )
+
             st.dataframe(
                 backtest_results[
                     ["Date", "Away Team", "Home Team", "Home Win Probability (%)",
