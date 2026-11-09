@@ -1,67 +1,107 @@
 # Four-Sport Forecasting Reliability Plan
 
-## Repository audit
+## Current build
 
-- The application is currently a single Streamlit script, `streamlit_app.py`.
-- It reads ESPN's free, unofficial scoreboard API; the endpoint has no documented
-  service-level guarantee in this project.
-- Historical request exceptions are silently ignored, and missing scores are
-  converted to zero. Historical games are not consistently validated or
-  de-duplicated.
-- Two unreachable duplicate implementations follow `return` statements.
-- All four sports use one Elo-style win model. Ties are treated as losses, score
-  forecasts are unshrunk means, and the app has no uncertainty, evaluation, or
-  persistent forecast history.
-- There are no automated tests or project-specific user/data-source docs.
-- `streamlit_app.py` was already modified and three backup snapshots were
-  already untracked when work began. They are preserved and are not to be
-  overwritten. Work is isolated on branch
-  `forecasting/reliable-four-sport-app`.
+The active development branch is `build/complete-dashboard`, based on
+`accuracy/score-projection-backtest`. Work is kept separate from the existing
+working branch until the new build passes its checks and is reviewed.
 
-## Prioritized implementation and status
+The application uses Streamlit, ESPN's free public scoreboard endpoints, the
+four-sport forecasting library in `sports_forecasting.py`, and local SQLite
+forecast history in `prediction_store.py`. No paid API subscription is
+required.
 
-1. **P0 — Reliable ingestion and parsing — complete**
-   - Validate API response shapes, event identifiers, UTC dates, team roles,
-     states, and numeric scores.
-   - Keep unavailable scores as missing, include ties, de-duplicate by event ID,
-     and surface request/schema failures instead of silently returning partial
-     history. Parse ESPN season phases and exclude identified preseason,
-     spring-training, and exhibition results from model fitting.
-   - Remove unreachable duplicate code and make the app importable/testable
-     without running the UI.
-2. **P1 — Sport-aware forecasts — complete**
-   - Use stable team IDs where available, same-day batch Elo updates, at least
-     180 days of dashboard rating history, inactivity regression, and
-     small-sample shrinkage alongside per-sport Elo settings.
-   - Produce venue-aware scoring estimates with low-sample shrinkage and
-     explicitly approximate score ranges; handle teams with no history safely.
-3. **P1 — No-leak chronological evaluation — complete**
-   - Add expanding-window walk-forward backtests. Every forecast is formed
-     before its game is added to model state.
-   - Report sample size, accuracy, Brier score, log loss, score MAE, and
-     appropriate simple baselines; do not make unsupported accuracy claims.
-4. **P2 — Calibration and forecast tracking — complete**
-   - Calibrate probabilities only from prior out-of-sample forecasts, falling
-     back to raw probabilities when the calibration sample is small.
-   - Persist the first pregame forecast and its model version for each event,
-     then attach actual results when available; migrate legacy history
-     additively without rewriting forecasts.
-5. **P2 — Dashboard and documentation — complete**
-   - Show data retrieval timestamps, cache windows, rating support, error,
-     missing-data, uncertainty, source, and limitation messaging.
-   - Replace template README instructions with setup, test, run, model, and
-     data-source documentation.
-6. **Verification — complete**
-   - Add deterministic tests for parsing, failure paths, duplicates, ratings,
-     stable IDs, season filtering, same-day order, decay/shrinkage, forecasts,
-     calibration, leakage, metrics, and database migration.
-   - The 31 unit and mocked dashboard tests pass; Python compilation,
-     whitespace checks, and Pylance syntax/diagnostic checks pass.
-   - A live ESPN 180-day warm-up / 60-day evaluation run on 2026-10-28 was
-     compared with 50% probability and prior-score baselines. It did not show
-     consistent gains: calibrated Brier was NFL .2494 vs .2468 baseline,
-     NBA .2673 vs .2500, MLB .2441 vs .2483, and NHL .2510 vs .2500.
-     Score MAE was NFL 7.202 vs 7.070, NBA 10.847 vs 10.562, MLB 2.402 vs
-     2.433, and NHL 1.432 vs 1.434. Only MLB improved on both reported
-     baseline families in this window; results are noisy and not a claim of
-     durable accuracy.
+## Implemented
+
+1. **Validated data ingestion**
+   - Validate ESPN response shapes, event identifiers, dates, team roles,
+     game states, and numeric scores.
+   - Keep unavailable scores missing instead of converting them to zero.
+   - De-duplicate event IDs and exclude identified preseason, spring-training,
+     and exhibition results from model fitting.
+   - Fetch history in one-day requests to avoid unsupported long date ranges;
+     retry temporary request failures and show a clear data error when a
+     response cannot be trusted.
+
+2. **Sport-aware team and score estimates**
+   - Separate Elo configuration for NFL, NBA, MLB, and NHL.
+   - Stable team IDs when ESPN provides them, same-day batch rating updates,
+     inactivity regression, and small-sample shrinkage.
+   - Venue-aware score estimates from historical home/away scoring and
+     opponent scoring allowed.
+   - Approximate score ranges are withheld until there is enough historical
+     score data; the ranges are not yet empirically coverage-calibrated.
+
+3. **Chronological backtesting**
+   - Expanding-window walk-forward evaluation forms each day's forecasts before
+     incorporating that day's final results.
+   - Probability metrics include decisive-game accuracy, Brier score, log loss,
+     and calibration error.
+   - Score MAE is measured per team score and compared with a baseline only on
+     matching model/baseline score observations.
+   - The dashboard labels sample sizes and explains that historical results do
+     not guarantee future performance.
+
+4. **First-forecast tracking**
+   - Store the first pregame forecast per event and model version in SQLite.
+   - Attach final scores later without overwriting the original forecast.
+   - Migrate older databases additively when the model-version column is
+     missing.
+   - Saved forecast tracking is separate from historical walk-forward testing.
+
+5. **Dashboard**
+   - Overview, team ratings, game estimates, and accuracy/history sections.
+   - One-sport detail selection plus an optional all-four-sports scoreboard.
+   - Optional four-sport walk-forward accuracy comparison.
+   - CSV exports for ratings, forecasts, scoreboards, backtests, and saved
+     forecast history.
+   - Cache controls, retrieval timestamp, source notes, and readable error
+     messages.
+
+6. **Automated verification**
+   - Unit tests cover parsing, data failures, duplicates, ratings, score
+     estimates, calibration, chronological leakage, paired score MAE, and
+     SQLite persistence.
+   - Streamlit smoke tests use mocked data and do not depend on live ESPN.
+   - GitHub Actions uses Python 3.14 and the locked `uv` environment.
+
+## Known limitations / not yet complete
+
+- ESPN is an unofficial public source with no service guarantee. Historical
+  coverage can vary by league and season.
+- Historical ingestion currently requests dates individually. A 180-day
+  window can take time, especially when ESPN is slow.
+- The current forecasts use team-level history. Confirmed injuries, player
+  availability, starting lineups, player-level stats, weather, travel,
+  rest, and richer sport-specific statistics are not included.
+- In-game scoreboards are displayed, but the app does not yet generate
+  validated live in-game forecasts.
+- Probability calibration is applied only to NFL and MLB and is based on
+  prior out-of-sample forecasts. Calibration quality still needs larger,
+  recent samples.
+- Score uncertainty ranges are approximate and have not yet been validated
+  for empirical coverage.
+- Saved forecasts live in the local SQLite file. They persist where that file
+  persists; a fresh hosted container may not retain local files.
+- Model quality is not yet consistently better than simple baselines across
+  all sports. Do not claim a proven accuracy edge.
+
+## Baseline evaluation snapshot
+
+A historical evaluation recorded on 2026-10-28 used a 180-day warm-up and
+60-day evaluation window. Reported Brier scores were NFL .2494 vs .2468
+baseline, NBA .2673 vs .2500, MLB .2441 vs .2483, and NHL .2510 vs .2500.
+Reported score MAE was NFL 7.202 vs 7.070, NBA 10.847 vs 10.562, MLB 2.402
+vs 2.433, and NHL 1.432 vs 1.434. Only MLB beat both reported baseline
+families in that snapshot. Results are noisy, historical, and not evidence
+of durable future accuracy.
+
+## Next priorities
+
+1. Get both GitHub Actions workflows green on the current branch.
+2. Run the Streamlit app against live ESPN data and check all four sports.
+3. Verify saved forecasts settle correctly after games finish and survive an
+   app restart in the user's Codespace.
+4. Expand player/team context only when reliable, free sources are available.
+5. Tune each sport only through out-of-sample backtests, retaining a change
+   only when it improves the appropriate metrics against baselines.
