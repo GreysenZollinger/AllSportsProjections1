@@ -211,3 +211,15 @@ def test_score_backtest_reports_league_average_baseline():
     assert metrics["baseline_away_score_mae"] >= 0
     assert metrics["baseline_margin_mae"] >= 0
     assert metrics["baseline_total_mae"] >= 0
+
+
+def test_score_backtest_empty_result_has_complete_metric_schema():
+    results, metrics = backtest_score_forecasts([])
+    assert results.empty
+    for key in (
+        "home_score_mae", "away_score_mae", "margin_mae", "total_mae",
+        "baseline_home_score_mae", "baseline_away_score_mae",
+        "baseline_margin_mae", "baseline_total_mae",
+    ):
+        assert key in metrics
+        assert metrics[key] is None
