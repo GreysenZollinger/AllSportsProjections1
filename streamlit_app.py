@@ -774,6 +774,9 @@ try:
                     _, comparison_metrics = backtest_model(
                         comparison_sport, comparison_history
                     )
+                    _, score_comparison = backtest_score_forecasts(
+                        comparison_history
+                    )
                     comparison_rows.append({
                         "Sport": comparison_sport,
                         "Games Available": len(comparison_history),
@@ -782,6 +785,14 @@ try:
                         "Model Accuracy (%)": comparison_metrics["accuracy"],
                         "Home Baseline (%)": comparison_metrics["baseline_accuracy"],
                         "Brier Score": comparison_metrics["brier"],
+                        "Home Score MAE": score_comparison["home_score_mae"],
+                        "Home Score Baseline MAE": score_comparison["baseline_home_score_mae"],
+                        "Away Score MAE": score_comparison["away_score_mae"],
+                        "Away Score Baseline MAE": score_comparison["baseline_away_score_mae"],
+                        "Margin MAE": score_comparison["margin_mae"],
+                        "Margin Baseline MAE": score_comparison["baseline_margin_mae"],
+                        "Total MAE": score_comparison["total_mae"],
+                        "Total Baseline MAE": score_comparison["baseline_total_mae"],
                     })
                 except Exception as comparison_error:
                     comparison_rows.append({
@@ -792,6 +803,14 @@ try:
                         "Model Accuracy (%)": None,
                         "Home Baseline (%)": None,
                         "Brier Score": None,
+                        "Home Score MAE": None,
+                        "Home Score Baseline MAE": None,
+                        "Away Score MAE": None,
+                        "Away Score Baseline MAE": None,
+                        "Margin MAE": None,
+                        "Margin Baseline MAE": None,
+                        "Total MAE": None,
+                        "Total Baseline MAE": None,
                     })
                     st.warning(
                         f"{comparison_sport} comparison unavailable: "
