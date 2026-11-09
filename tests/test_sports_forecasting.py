@@ -152,6 +152,15 @@ class DataRetrievalTests(unittest.TestCase):
 
 
 class ForecastModelTests(unittest.TestCase):
+    def test_empty_metrics_keep_a_complete_schema(self) -> None:
+        metrics = forecasting._metrics([])
+
+        self.assertEqual(metrics["games"], 0)
+        self.assertEqual(metrics["score_games"], 0)
+        self.assertEqual(metrics["score_observations"], 0)
+        self.assertIsNone(metrics["score_mae"])
+        self.assertIsNone(metrics["baseline_score_mae"])
+
     def test_score_mae_compares_model_and_baseline_on_matching_scores(self) -> None:
         predictions = [
             {
