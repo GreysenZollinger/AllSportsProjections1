@@ -137,3 +137,58 @@ def test_weighted_average_returns_none_for_no_data():
 
 def test_weighted_average_can_use_equal_weights():
     assert weighted_recent_average([10, 20, 30], decay=1.0) == 20
+
+
+
+def load_score_backtest():
+    import math
+    import pandas as pd
+
+    source_path = Path(__file__).resolve().parents[1] / "streamlit_app.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    function_nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"backtest_score_forecasts", "weighted_recent_average"}
+    ]
+    module = ast.Module(body=function_nodes, type_ignores=[])
+    namespace = {"pd": pd}
+    exec(compile(module, str(source_path), "exec"), namespace)
+    return namespace["backtest_score_forecasts"]
+
+
+backtest_score_forecasts = load_score_backtest()
+
+
+def test_score_backtest_only_evaluates_after_warmup():
+    history = []
+    for index in range(10):
+        history.append({
+            "Date": f"2026-01-{index + 1:02d}",
+            "Away Team": "Away",
+            "Home Team": "Home",
+            "Away Score": 10 + index,
+            "Home Score": 14 + index,
+        })
+
+    results, metrics = backtest_score_forecasts(history)
+    assert metrics["training_games"] == 3
+    assert metrics["games"] == 7
+    assert len(results) == 7
+    assert metrics["home_score_mae"] >= 0
+    assert metrics["away_score_mae"] >= 0
+    assert metrics["margin_mae"] >= 0
+    assert metrics["total_mae"] >= 0
+
+
+def test_score_backtest_handles_insufficient_history():
+    results, metrics = backtest_score_forecasts([{
+        "Date": "2026-01-01",
+        "Away Team": "Away",
+        "Home Team": "Home",
+        "Away Score": 3,
+        "Home Score": 4,
+    }])
+    assert results.empty
+    assert metrics["games"] == 0
+    assert metrics["total_mae"] is None
