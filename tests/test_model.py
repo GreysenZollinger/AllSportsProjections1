@@ -223,3 +223,38 @@ def test_score_backtest_empty_result_has_complete_metric_schema():
     ):
         assert key in metrics
         assert metrics[key] is None
+
+
+def test_score_backtest_does_not_leak_results_between_same_day_games():
+    history = []
+    # First three dates are warm-up. Both games on the fourth date must use
+    # the same pre-date snapshot, even though one is listed first.
+    for index in range(3):
+        history.append({
+            "Date": f"2026-03-0{index + 1}T12:00:00Z",
+            "Away Team": "A",
+            "Home Team": "B",
+            "Away Score": 10,
+            "Home Score": 20,
+        })
+    history.extend([
+        {
+            "Date": "2026-03-04T13:00:00Z",
+            "Away Team": "A",
+            "Home Team": "B",
+            "Away Score": 100,
+            "Home Score": 200,
+        },
+        {
+            "Date": "2026-03-04T20:00:00Z",
+            "Away Team": "A",
+            "Home Team": "B",
+            "Away Score": 1,
+            "Home Score": 2,
+        },
+    ])
+
+    results, metrics = backtest_score_forecasts(history)
+    assert metrics["games"] == 2
+    assert results.iloc[0]["Projected Home Score"] == results.iloc[1]["Projected Home Score"]
+    assert results.iloc[0]["Projected Away Score"] == results.iloc[1]["Projected Away Score"]

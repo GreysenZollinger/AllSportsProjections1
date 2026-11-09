@@ -306,94 +306,116 @@ def backtest_model(sport, history):
 
 
 def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
-    """Walk-forward score, margin, and total evaluation without future-data leakage."""
+    """Walk-forward score, margin, and total evaluation without same-day leakage."""
     ordered = sorted(history, key=lambda game: game["Date"])
-    warmup = max(1, int(len(ordered) * warmup_fraction)) if ordered else 0
+    games_by_day = {}
+    for game in ordered:
+        # ESPN timestamps are ISO strings; games on one calendar date must share
+        # the same pre-game information set, regardless of their kickoff time.
+        day = str(game["Date"])[:10]
+        games_by_day.setdefault(day, []).append(game)
+
+    days = list(games_by_day.values())
+    warmup_days = max(1, int(len(days) * warmup_fraction)) if days else 0
+    warmup_games = sum(len(group) for group in days[:warmup_days])
     team_history = {}
     predictions = []
 
-    for index, game in enumerate(ordered):
-        home = game["Home Team"]
-        away = game["Away Team"]
-        actual_home = float(game["Home Score"])
-        actual_away = float(game["Away Score"])
+    def current_league_average():
+        all_scores = [
+            score
+            for values in team_history.values()
+            for score in values["for"]
+        ]
+        return sum(all_scores) / len(all_scores) if all_scores else 0.0
 
-        if index >= warmup:
-            all_scores = [
-                score
-                for values in team_history.values()
-                for score in values["for"]
-            ]
-            league_average = (
-                sum(all_scores) / len(all_scores) if all_scores else 0.0
-            )
+    def estimate(team, key, league_average):
+        values = team_history.get(team, {}).get(key, [])[-window:]
+        recent = weighted_recent_average(values)
+        if recent is None:
+            return league_average
+        reliability = len(values) / (len(values) + 4)
+        return reliability * recent + (1 - reliability) * league_average
 
-            def estimate(team, key):
-                values = team_history.get(team, {}).get(key, [])[-window:]
-                recent = weighted_recent_average(values)
-                if recent is None:
-                    return league_average
-                reliability = len(values) / (len(values) + 4)
-                return reliability * recent + (1 - reliability) * league_average
+    for day_index, day_games in enumerate(days):
+        # Every game on a date is forecast from the same data snapshot.
+        if day_index >= warmup_days:
+            league_average = current_league_average()
+            for game in day_games:
+                home = game["Home Team"]
+                away = game["Away Team"]
+                actual_home = float(game["Home Score"])
+                actual_away = float(game["Away Score"])
 
-            predicted_home = (
-                estimate(home, "for") + estimate(away, "against")
-            ) / 2
-            predicted_away = (
-                estimate(away, "for") + estimate(home, "against")
-            ) / 2
-            predicted_margin = predicted_home - predicted_away
-            predicted_total = predicted_home + predicted_away
+                predicted_home = (
+                    estimate(home, "for", league_average)
+                    + estimate(away, "against", league_average)
+                ) / 2
+                predicted_away = (
+                    estimate(away, "for", league_average)
+                    + estimate(home, "against", league_average)
+                ) / 2
+                predicted_margin = predicted_home - predicted_away
+                predicted_total = predicted_home + predicted_away
+                baseline_home = league_average
+                baseline_away = league_average
 
-            # Simple pre-game baseline: predict each side at the league's
-            # average points per team from games completed before this date.
-            baseline_home = league_average
-            baseline_away = league_average
-            baseline_margin = baseline_home - baseline_away
-            baseline_total = baseline_home + baseline_away
+                predictions.append({
+                    "Date": game["Date"],
+                    "Away Team": away,
+                    "Home Team": home,
+                    "Projected Away Score": predicted_away,
+                    "Actual Away Score": actual_away,
+                    "Projected Home Score": predicted_home,
+                    "Actual Home Score": actual_home,
+                    "Projected Margin (Home)": predicted_margin,
+                    "Actual Margin (Home)": actual_home - actual_away,
+                    "Projected Total": predicted_total,
+                    "Actual Total": actual_home + actual_away,
+                    "Home Score Absolute Error": abs(predicted_home - actual_home),
+                    "Away Score Absolute Error": abs(predicted_away - actual_away),
+                    "Margin Absolute Error": abs(
+                        predicted_margin - (actual_home - actual_away)
+                    ),
+                    "Total Absolute Error": abs(
+                        predicted_total - (actual_home + actual_away)
+                    ),
+                    "Baseline Home Score Absolute Error": abs(
+                        baseline_home - actual_home
+                    ),
+                    "Baseline Away Score Absolute Error": abs(
+                        baseline_away - actual_away
+                    ),
+                    "Baseline Margin Absolute Error": abs(
+                        (baseline_home - baseline_away)
+                        - (actual_home - actual_away)
+                    ),
+                    "Baseline Total Absolute Error": abs(
+                        (baseline_home + baseline_away)
+                        - (actual_home + actual_away)
+                    ),
+                })
 
-            predictions.append({
-                "Date": game["Date"],
-                "Away Team": away,
-                "Home Team": home,
-                "Projected Away Score": predicted_away,
-                "Actual Away Score": actual_away,
-                "Projected Home Score": predicted_home,
-                "Actual Home Score": actual_home,
-                "Projected Margin (Home)": predicted_margin,
-                "Actual Margin (Home)": actual_home - actual_away,
-                "Projected Total": predicted_total,
-                "Actual Total": actual_home + actual_away,
-                "Home Score Absolute Error": abs(predicted_home - actual_home),
-                "Away Score Absolute Error": abs(predicted_away - actual_away),
-                "Margin Absolute Error": abs(
-                    predicted_margin - (actual_home - actual_away)
-                ),
-                "Total Absolute Error": abs(
-                    predicted_total - (actual_home + actual_away)
-                ),
-                "Baseline Home Score Absolute Error": abs(baseline_home - actual_home),
-                "Baseline Away Score Absolute Error": abs(baseline_away - actual_away),
-                "Baseline Margin Absolute Error": abs(
-                    baseline_margin - (actual_home - actual_away)
-                ),
-                "Baseline Total Absolute Error": abs(
-                    baseline_total - (actual_home + actual_away)
-                ),
-            })
-
-        for team, scored, allowed in (
-            (home, actual_home, actual_away),
-            (away, actual_away, actual_home),
-        ):
-            team_history.setdefault(team, {"for": [], "against": []})
-            team_history[team]["for"].append(scored)
-            team_history[team]["against"].append(allowed)
+        # Only after all forecasts for this date are recorded do results enter
+        # team form. This prevents an earlier kickoff from leaking into a later
+        # same-day game's forecast.
+        for game in day_games:
+            home = game["Home Team"]
+            away = game["Away Team"]
+            actual_home = float(game["Home Score"])
+            actual_away = float(game["Away Score"])
+            for team, scored, allowed in (
+                (home, actual_home, actual_away),
+                (away, actual_away, actual_home),
+            ):
+                team_history.setdefault(team, {"for": [], "against": []})
+                team_history[team]["for"].append(scored)
+                team_history[team]["against"].append(allowed)
 
     results = pd.DataFrame(predictions)
     if results.empty:
         return results, {
-            "training_games": warmup,
+            "training_games": warmup_games,
             "games": 0,
             "home_score_mae": None,
             "away_score_mae": None,
@@ -406,7 +428,7 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
         }
 
     metrics = {
-        "training_games": warmup,
+        "training_games": warmup_games,
         "games": len(results),
         "home_score_mae": round(results["Home Score Absolute Error"].mean(), 2),
         "away_score_mae": round(results["Away Score Absolute Error"].mean(), 2),
