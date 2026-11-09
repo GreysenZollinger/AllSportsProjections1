@@ -227,7 +227,11 @@ try:
             "These are pregame statistical estimates from historical team results. "
             "They are not live in-game forecasts and are not guaranteed outcomes."
         )
-        pregame = predictions[predictions["State"] == "pre"].copy()
+        pregame = (
+            predictions[predictions["State"] == "pre"].copy()
+            if not predictions.empty
+            else pd.DataFrame()
+        )
         if pregame.empty:
             st.info("No upcoming pregame matchups were returned for this sport.")
         else:
@@ -360,7 +364,7 @@ try:
     )
 
 except forecasting.SportsDataError as error:
-    st.error("Sports data could not be validated or retrieved.")
+    st.error("Couldn't retrieve sports data or validate the ESPN response.")
     st.warning(str(error))
     st.info("Try Refresh sports data again later.")
 except Exception as error:
