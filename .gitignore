@@ -1,5 +1,8 @@
 .streamlit/secrets.toml
 
+# Local forecast history (never commit personal runtime data)
+prediction_history.sqlite3
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
