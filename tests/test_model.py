@@ -192,3 +192,22 @@ def test_score_backtest_handles_insufficient_history():
     assert results.empty
     assert metrics["games"] == 0
     assert metrics["total_mae"] is None
+
+
+
+def test_score_backtest_reports_league_average_baseline():
+    history = []
+    for index in range(12):
+        history.append({
+            "Date": f"2026-02-{index + 1:02d}",
+            "Away Team": "Away",
+            "Home Team": "Home",
+            "Away Score": 10 + (index % 3),
+            "Home Score": 14 + (index % 3),
+        })
+
+    _, metrics = backtest_score_forecasts(history)
+    assert metrics["baseline_home_score_mae"] >= 0
+    assert metrics["baseline_away_score_mae"] >= 0
+    assert metrics["baseline_margin_mae"] >= 0
+    assert metrics["baseline_total_mae"] >= 0

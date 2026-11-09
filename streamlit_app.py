@@ -345,6 +345,13 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
             predicted_margin = predicted_home - predicted_away
             predicted_total = predicted_home + predicted_away
 
+            # Simple pre-game baseline: predict each side at the league's
+            # average points per team from games completed before this date.
+            baseline_home = league_average
+            baseline_away = league_average
+            baseline_margin = baseline_home - baseline_away
+            baseline_total = baseline_home + baseline_away
+
             predictions.append({
                 "Date": game["Date"],
                 "Away Team": away,
@@ -364,6 +371,14 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
                 ),
                 "Total Absolute Error": abs(
                     predicted_total - (actual_home + actual_away)
+                ),
+                "Baseline Home Score Absolute Error": abs(baseline_home - actual_home),
+                "Baseline Away Score Absolute Error": abs(baseline_away - actual_away),
+                "Baseline Margin Absolute Error": abs(
+                    baseline_margin - (actual_home - actual_away)
+                ),
+                "Baseline Total Absolute Error": abs(
+                    baseline_total - (actual_home + actual_away)
                 ),
             })
 
@@ -393,6 +408,18 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
         "away_score_mae": round(results["Away Score Absolute Error"].mean(), 2),
         "margin_mae": round(results["Margin Absolute Error"].mean(), 2),
         "total_mae": round(results["Total Absolute Error"].mean(), 2),
+        "baseline_home_score_mae": round(
+            results["Baseline Home Score Absolute Error"].mean(), 2
+        ),
+        "baseline_away_score_mae": round(
+            results["Baseline Away Score Absolute Error"].mean(), 2
+        ),
+        "baseline_margin_mae": round(
+            results["Baseline Margin Absolute Error"].mean(), 2
+        ),
+        "baseline_total_mae": round(
+            results["Baseline Total Absolute Error"].mean(), 2
+        ),
     }
     return results, metrics
 
@@ -656,6 +683,44 @@ try:
             st.caption(
                 f"{score_metrics['games']} games evaluated after "
                 f"{score_metrics['training_games']} warm-up games."
+            )
+            st.write("**Compare against a simple league-average baseline (lower MAE is better)**")
+            baseline_cols = st.columns(4)
+            baseline_cols[0].metric(
+                "Home score baseline",
+                score_metrics["baseline_home_score_mae"],
+                delta=round(
+                    score_metrics["baseline_home_score_mae"] - score_metrics["home_score_mae"], 2
+                ),
+                delta_color="inverse",
+            )
+            baseline_cols[1].metric(
+                "Away score baseline",
+                score_metrics["baseline_away_score_mae"],
+                delta=round(
+                    score_metrics["baseline_away_score_mae"] - score_metrics["away_score_mae"], 2
+                ),
+                delta_color="inverse",
+            )
+            baseline_cols[2].metric(
+                "Margin baseline",
+                score_metrics["baseline_margin_mae"],
+                delta=round(
+                    score_metrics["baseline_margin_mae"] - score_metrics["margin_mae"], 2
+                ),
+                delta_color="inverse",
+            )
+            baseline_cols[3].metric(
+                "Total baseline",
+                score_metrics["baseline_total_mae"],
+                delta=round(
+                    score_metrics["baseline_total_mae"] - score_metrics["total_mae"], 2
+                ),
+                delta_color="inverse",
+            )
+            st.caption(
+                "Positive delta means the recent-form model's error is lower than "
+                "the league-average baseline; negative means the baseline performed better."
             )
             st.dataframe(
                 score_results[
