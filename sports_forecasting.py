@@ -768,6 +768,8 @@ def _metrics(predictions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "baseline_log_loss": None,
             "score_mae": None,
             "baseline_score_mae": None,
+            "score_games": 0,
+            "score_observations": 0,
             "calibration_error": None,
         }
     if not predictions:
@@ -818,24 +820,26 @@ def _metrics(predictions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         ) / len(decisive)
         if decisive else None
     )
-    model_score_errors = [
-        abs(item["home_projected_score"] - item["actual_home_score"])
-        for item in predictions
-        if item["home_projected_score"] is not None
-    ] + [
-        abs(item["away_projected_score"] - item["actual_away_score"])
-        for item in predictions
-        if item["away_projected_score"] is not None
-    ]
-    baseline_score_errors = [
-        abs(item["baseline_home_score"] - item["actual_home_score"])
-        for item in predictions
-        if item["baseline_home_score"] is not None
-    ] + [
-        abs(item["baseline_away_score"] - item["actual_away_score"])
-        for item in predictions
-        if item["baseline_away_score"] is not None
-    ]
+    model_score_errors = []
+    baseline_score_errors = []
+    score_games = 0
+    for item in predictions:
+        paired_game = False
+        for model_key, baseline_key, actual_key in (
+            ("home_projected_score", "baseline_home_score", "actual_home_score"),
+            ("away_projected_score", "baseline_away_score", "actual_away_score"),
+        ):
+            model_score = item.get(model_key)
+            baseline_score = item.get(baseline_key)
+            actual_score = item.get(actual_key)
+            if model_score is None or baseline_score is None or actual_score is None:
+                continue
+            actual_score = float(actual_score)
+            model_score_errors.append(abs(float(model_score) - actual_score))
+            baseline_score_errors.append(abs(float(baseline_score) - actual_score))
+            paired_game = True
+        if paired_game:
+            score_games += 1
     bin_errors = []
     for bin_index in range(5):
         bin_items = [
@@ -872,6 +876,8 @@ def _metrics(predictions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             statistics.fmean(baseline_score_errors)
             if baseline_score_errors else None
         ),
+        "score_games": score_games,
+        "score_observations": len(model_score_errors),
         "calibration_error": sum(bin_errors),
     }
 
