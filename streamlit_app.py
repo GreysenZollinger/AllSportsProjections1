@@ -399,6 +399,10 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
             "away_score_mae": None,
             "margin_mae": None,
             "total_mae": None,
+            "baseline_home_score_mae": None,
+            "baseline_away_score_mae": None,
+            "baseline_margin_mae": None,
+            "baseline_total_mae": None,
         }
 
     metrics = {
