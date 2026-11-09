@@ -329,13 +329,28 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
         ]
         return sum(all_scores) / len(all_scores) if all_scores else 0.0
 
-    def estimate(team, key, league_average):
-        values = team_history.get(team, {}).get(key, [])[-window:]
-        recent = weighted_recent_average(values)
-        if recent is None:
-            return league_average
-        reliability = len(values) / (len(values) + 4)
-        return reliability * recent + (1 - reliability) * league_average
+    def estimate(team, venue, key, league_average):
+        stats = team_history.get(team, {})
+        overall = stats.get(key, [])[-window:]
+        overall_average = weighted_recent_average(overall)
+        if overall_average is None:
+            overall_average = league_average
+
+        # Venue splits are noisy early in a season, so shrink them toward
+        # the team's overall recent rate before applying league shrinkage.
+        venue_values = stats.get(f"{venue}_{key}", [])[-window:]
+        venue_average = weighted_recent_average(venue_values)
+        if venue_average is not None:
+            venue_reliability = len(venue_values) / (len(venue_values) + 5)
+            team_average = (
+                venue_reliability * venue_average
+                + (1 - venue_reliability) * overall_average
+            )
+        else:
+            team_average = overall_average
+
+        reliability = len(overall) / (len(overall) + 4)
+        return reliability * team_average + (1 - reliability) * league_average
 
     for day_index, day_games in enumerate(days):
         # Every game on a date is forecast from the same data snapshot.
@@ -348,12 +363,12 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
                 actual_away = float(game["Away Score"])
 
                 predicted_home = (
-                    estimate(home, "for", league_average)
-                    + estimate(away, "against", league_average)
+                    estimate(home, "home", "for", league_average)
+                    + estimate(away, "away", "against", league_average)
                 ) / 2
                 predicted_away = (
-                    estimate(away, "for", league_average)
-                    + estimate(home, "against", league_average)
+                    estimate(away, "away", "for", league_average)
+                    + estimate(home, "home", "against", league_average)
                 ) / 2
                 predicted_margin = predicted_home - predicted_away
                 predicted_total = predicted_home + predicted_away
@@ -404,13 +419,22 @@ def backtest_score_forecasts(history, warmup_fraction=0.30, window=10):
             away = game["Away Team"]
             actual_home = float(game["Home Score"])
             actual_away = float(game["Away Score"])
-            for team, scored, allowed in (
-                (home, actual_home, actual_away),
-                (away, actual_away, actual_home),
+            for team, venue, scored, allowed in (
+                (home, "home", actual_home, actual_away),
+                (away, "away", actual_away, actual_home),
             ):
-                team_history.setdefault(team, {"for": [], "against": []})
-                team_history[team]["for"].append(scored)
-                team_history[team]["against"].append(allowed)
+                stats = team_history.setdefault(
+                    team,
+                    {
+                        "for": [], "against": [],
+                        "home_for": [], "home_against": [],
+                        "away_for": [], "away_against": [],
+                    },
+                )
+                stats["for"].append(scored)
+                stats["against"].append(allowed)
+                stats[f"{venue}_for"].append(scored)
+                stats[f"{venue}_against"].append(allowed)
 
     results = pd.DataFrame(predictions)
     if results.empty:
@@ -466,29 +490,49 @@ def make_predictions(sport, games, ratings, history):
     # Recent results matter more, while shrinkage limits tiny-sample extremes.
     scoring = {}
     for game in sorted(history, key=lambda row: row["Date"]):
-        for team, scored, allowed in (
-            (game["Home Team"], game["Home Score"], game["Away Score"]),
-            (game["Away Team"], game["Away Score"], game["Home Score"]),
+        for team, venue, scored, allowed in (
+            (game["Home Team"], "home", game["Home Score"], game["Away Score"]),
+            (game["Away Team"], "away", game["Away Score"], game["Home Score"]),
         ):
-            scoring.setdefault(team, {"for": [], "against": []})
-            scoring[team]["for"].append(float(scored))
-            scoring[team]["against"].append(float(allowed))
+            stats = scoring.setdefault(
+                team,
+                {
+                    "for": [], "against": [],
+                    "home_for": [], "home_against": [],
+                    "away_for": [], "away_against": [],
+                },
+            )
+            stats["for"].append(float(scored))
+            stats["against"].append(float(allowed))
+            stats[f"{venue}_for"].append(float(scored))
+            stats[f"{venue}_against"].append(float(allowed))
 
     for team_stats in scoring.values():
-        team_stats["for"] = team_stats["for"][-10:]
-        team_stats["against"] = team_stats["against"][-10:]
+        for values in team_stats.values():
+            values[:] = values[-10:]
 
     league_scored = [
         float(g["Home Score"]) for g in history
     ] + [float(g["Away Score"]) for g in history]
     league_average = sum(league_scored) / len(league_scored) if league_scored else 0.0
 
-    def team_average(team, key):
-        values = scoring.get(team, {}).get(key, [])
+    def team_average(team, venue, key):
+        stats = scoring.get(team, {})
+        values = stats.get(key, [])
         recent_average = weighted_recent_average(values)
         if recent_average is None:
-            return league_average
-        # Four pseudo-games at league average reduce overreaction to small samples.
+            recent_average = league_average
+
+        venue_values = stats.get(f"{venue}_{key}", [])
+        venue_average = weighted_recent_average(venue_values)
+        if venue_average is not None:
+            venue_reliability = len(venue_values) / (len(venue_values) + 5)
+            recent_average = (
+                venue_reliability * venue_average
+                + (1 - venue_reliability) * recent_average
+            )
+
+        # Shrink small team samples toward the league scoring environment.
         reliability = len(values) / (len(values) + 4)
         return reliability * recent_average + (1 - reliability) * league_average
 
@@ -509,10 +553,10 @@ def make_predictions(sport, games, ratings, history):
         # Blend a team's scoring rate with its opponent's points-allowed rate.
         # Use only completed games in the selected historical window.
         away_projected = (
-            team_average(away, "for") + team_average(home, "against")
+            team_average(away, "away", "for") + team_average(home, "home", "against")
         ) / 2
         home_projected = (
-            team_average(home, "for") + team_average(away, "against")
+            team_average(home, "home", "for") + team_average(away, "away", "against")
         ) / 2
         projected_total = home_projected + away_projected
         projected_margin = home_projected - away_projected
