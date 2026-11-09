@@ -772,21 +772,6 @@ def _metrics(predictions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "score_observations": 0,
             "calibration_error": None,
         }
-    if not predictions:
-        return {
-            "games": 0,
-            "decisive_games": 0,
-            "accuracy": None,
-            "brier_score": None,
-            "raw_brier_score": None,
-            "baseline_brier_score": None,
-            "log_loss": None,
-            "baseline_log_loss": None,
-            "score_mae": None,
-            "baseline_score_mae": None,
-            "calibration_error": None,
-        }
-
     outcomes = [float(item["home_outcome"]) for item in predictions]
     probabilities = [float(item["home_probability"]) for item in predictions]
     raw_probabilities = [
