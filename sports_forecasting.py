@@ -557,19 +557,6 @@ def _score_projection(
     )
 
 
-def fair_moneyline(probability: float) -> int:
-    """Convert a model win probability to fair American odds."""
-    if not math.isfinite(probability) or not 0 <= probability <= 1:
-        raise ValueError("Win probability must be between 0 and 1.")
-
-    # Avoid undefined odds at exactly 0% or 100%.
-    probability = min(0.999, max(0.001, probability))
-
-    if probability >= 0.5:
-        return round(-100 * probability / (1 - probability))
-    return round(100 * (1 - probability) / probability)
-
-
 def make_predictions(
     sport: str,
     games: Sequence[Mapping[str, Any]],
@@ -625,7 +612,6 @@ def make_predictions(
             ),
             "Away Score Range (approx. 80%)": score_range(projected_away),
             "Away Win Chance (%)": round((1 - home_chance) * 100, 1),
-            "Away Fair Moneyline": fair_moneyline(1 - home_chance),
             "Home Team": home,
             "Home Rating": round(float(ratings.get(home_key, 1500.0))),
             "Home Projected Score": (
@@ -634,7 +620,6 @@ def make_predictions(
             "Projected Game Total": projected_total,
             "Home Score Range (approx. 80%)": score_range(projected_home),
             "Home Win Chance (%)": round(home_chance * 100, 1),
-            "Home Fair Moneyline": fair_moneyline(home_chance),
             "Raw Home Win Chance (%)": round(raw_home * 100, 1),
             "Model Lean": home if home_chance >= 0.5 else away,
             "Status": game.get("Status", "Status unavailable"),
