@@ -355,6 +355,74 @@ try:
                 mime="text/csv",
             )
 
+        st.divider()
+        st.subheader("Compare all four sports")
+        st.caption(
+            "This optional comparison loads the same historical window for all "
+            "four leagues and evaluates each with the same walk-forward rules."
+        )
+        if st.button("Run four-sport accuracy comparison", key="run_four_sport_comparison"):
+            comparison_rows = []
+            progress = st.progress(0, text="Preparing four-sport comparison...")
+            for index, comparison_sport in enumerate(SPORTS):
+                try:
+                    comparison_history = (
+                        history
+                        if comparison_sport == sport
+                        else load_completed_history(comparison_sport, history_days)
+                    )
+                    comparison = forecasting.walk_forward_backtest(
+                        comparison_sport,
+                        comparison_history,
+                        min_train_games=20,
+                    )
+                    comparison_metrics = comparison["metrics"]
+                    comparison_rows.append({
+                        "Sport": comparison_sport,
+                        "Completed games": len(comparison_history),
+                        "Games evaluated": comparison_metrics["games"],
+                        "Winner accuracy (%)": (
+                            round(comparison_metrics["accuracy"] * 100, 1)
+                            if comparison_metrics["accuracy"] is not None else None
+                        ),
+                        "Brier score": comparison_metrics["brier_score"],
+                        "Baseline Brier": comparison_metrics["baseline_brier_score"],
+                        "Score MAE": comparison_metrics["score_mae"],
+                        "Baseline score MAE": comparison_metrics["baseline_score_mae"],
+                    })
+                except forecasting.SportsDataError as comparison_error:
+                    comparison_rows.append({
+                        "Sport": comparison_sport,
+                        "Completed games": None,
+                        "Games evaluated": 0,
+                        "Winner accuracy (%)": None,
+                        "Brier score": None,
+                        "Baseline Brier": None,
+                        "Score MAE": None,
+                        "Baseline score MAE": None,
+                    })
+                    st.warning(
+                        f"{comparison_sport} data was unavailable: {comparison_error}"
+                    )
+                progress.progress(
+                    (index + 1) / len(SPORTS),
+                    text=f"Compared {index + 1} of {len(SPORTS)} sports",
+                )
+            progress.empty()
+            comparison_table = pd.DataFrame(comparison_rows)
+            st.dataframe(
+                comparison_table,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.download_button(
+                "Download four-sport accuracy comparison",
+                comparison_table.to_csv(index=False),
+                file_name="four_sport_accuracy_comparison.csv",
+                mime="text/csv",
+                key="download_four_sport_comparison",
+            )
+
     st.divider()
     st.caption(
         "Prototype sports analytics. ESPN is an unofficial public data source "
